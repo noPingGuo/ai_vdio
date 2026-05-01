@@ -24,89 +24,195 @@ function withCookie(path) {
 }
 
 // ============================================================
-// 加载歌单（分批获取详情 + 播放 URL）
+// 渐进式加载歌单（localStorage 缓存 + 首批 80 首快速就绪）
 // ============================================================
-async function loadPlaylist(id) {
+const INITIAL_BATCH = 80;
+const CACHE_KEY = "claudio_playlist_";
+const CACHE_HOURS = 6;
+
+function _cacheKey(id) { return CACHE_KEY + id; }
+
+function _getCached(id) {
+    try {
+        const raw = localStorage.getItem(_cacheKey(id));
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        if (Date.now() - data.ts > CACHE_HOURS * 3600 * 1000) {
+            localStorage.removeItem(_cacheKey(id));
+            return null;
+        }
+        return data; // { ts, name, tracks: [{id,name,artist,album,duration}] }
+    } catch { return null; }
+}
+
+function _setCache(id, name, tracks) {
+    try {
+        localStorage.setItem(_cacheKey(id), JSON.stringify({
+            ts: Date.now(), name,
+            tracks: tracks.map(t => ({ id: t.id, name: t.name, artist: t.artist, album: t.album, duration: t.duration }))
+        }));
+    } catch { /* quota exceeded */ }
+}
+
+// 仅获取 URL 映射（不拿详情，配合缓存使用）
+async function _fetchUrlMap(ids) {
+    const idsStr = ids.join(",");
+    const urlRes = await fetch(withCookie(`/song/url?id=${idsStr}`));
+    const urlData = await urlRes.json();
+    const map = {};
+    if (urlData.code === 200) {
+        urlData.data.forEach(item => { if (item.url) map[item.id] = item.url; });
+    }
+    return map;
+}
+
+async function loadPlaylistQuick(id) {
     setStatus("● Loading playlist...");
-    setSubtitle("正在加载歌单...");
+    const cached = _getCached(id);
 
-    // 1. 获取歌单基本信息和所有 trackIds
-    const plRes = await fetch(withCookie(`/playlist/detail?id=${id}`));
-    const plData = await plRes.json();
+    let allIds, urlMap;
 
-    if (plData.code !== 200 || !plData.playlist) {
-        throw new Error("歌单加载失败，请检查歌单 ID");
+    if (cached) {
+        // ── 缓存命中：秒读 metadata，仅刷新 URL ──
+        setSubtitle("加载歌单...");
+        playlist.name = cached.name;
+        // 用缓存构建 tracks（url 先为空）
+        playlist.tracks = cached.tracks.map(t => ({ ...t, url: null }));
+        allIds = cached.tracks.map(t => t.id);
+
+        // 刷新首批 URL
+        urlMap = await _fetchUrlMap(allIds.slice(0, INITIAL_BATCH));
+        for (const t of playlist.tracks) {
+            if (urlMap[t.id]) t.url = urlMap[t.id];
+        }
+        playlist.tracks = playlist.tracks.filter(t => t.url);
+        console.log(`📋 缓存命中: ${playlist.name}，${playlist.tracks.length}/${allIds.length} 首可播`);
+    } else {
+        // ── 首次加载：完整 API 获取 ──
+        setSubtitle("正在加载歌单...");
+        const plRes = await fetch(withCookie(`/playlist/detail?id=${id}`));
+        const plData = await plRes.json();
+        if (plData.code !== 200 || !plData.playlist) throw new Error("歌单加载失败");
+
+        playlist.name = plData.playlist.name;
+        allIds = plData.playlist.trackIds.map(t => t.id);
+        if (allIds.length === 0) throw new Error("歌单为空");
+
+        // 首批：完整加载详情+URL
+        playlist.tracks = await _loadBatch(allIds.slice(0, INITIAL_BATCH));
+        console.log(`📋 首次加载: ${playlist.name}，共 ${allIds.length} 首`);
+
+        // 缓存 metadata（不含 URL）
+        _setCache(id, playlist.name, playlist.tracks);
     }
 
-    playlist.name = plData.playlist.name;
-    const allIds = plData.playlist.trackIds.map(t => t.id);
+    if (playlist.tracks.length === 0) throw new Error("没有可播放的歌曲，MUSIC_U cookie 可能已过期");
 
-    if (allIds.length === 0) throw new Error("歌单为空");
+    currentTrackIndex = Math.floor(Math.random() * playlist.tracks.length);
+    trackHistory = [currentTrackIndex];
 
-    console.log(`📋 歌单: ${playlist.name}，共 ${allIds.length} 首`);
-
-    // 2. 分批获取歌曲详情 + 播放 URL
-    const allTracks = [];
-    const totalBatches = Math.ceil(allIds.length / BATCH_SIZE);
-
-    for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
-        const batch = allIds.slice(i, i + BATCH_SIZE);
-        const idsStr = batch.join(",");
-        const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-
-        setSubtitle(`正在加载歌单... (${batchNum}/${totalBatches})`);
-
-        const [detailRes, urlRes] = await Promise.all([
-            fetch(withCookie(`/song/detail?ids=${idsStr}`)),
-            fetch(withCookie(`/song/url?id=${idsStr}`))
-        ]);
-
-        const detailData = await detailRes.json();
-        const urlData = await urlRes.json();
-
-        const urlMap = {};
-        if (urlData.code === 200) {
-            urlData.data.forEach(item => {
-                if (item.url) urlMap[item.id] = item.url;
-            });
-        }
-
-        if (detailData.code === 200 && detailData.songs) {
-            for (const song of detailData.songs) {
-                if (urlMap[song.id]) {
-                    allTracks.push({
-                        id: song.id,
-                        name: song.name,
-                        artist: (song.ar || []).map(a => a.name).join(", "),
-                        album: (song.al || {}).name || "",
-                        duration: song.dt || 0,
-                        url: urlMap[song.id]
-                    });
-                }
-            }
+    // 后台加载剩余
+    const remaining = allIds.slice(INITIAL_BATCH);
+    if (remaining.length > 0) {
+        if (cached) {
+            _loadRemainingFromCache(remaining);
+        } else {
+            _loadRemaining(remaining);
         }
     }
 
-    playlist.tracks = allTracks;
-
-    if (playlist.tracks.length === 0) {
-        throw new Error("歌单中没有可播放的歌曲，MUSIC_U cookie 可能已过期");
-    }
-
-    console.log(`✅ 就绪: ${playlist.tracks.length} 首可播放`);
-    setSubtitle(`歌单就绪 — ${playlist.tracks.length} 首`);
+    setSubtitle(`歌单就绪 — ${playlist.tracks.length}+ 首`);
     return playlist;
 }
 
+async function _loadBatch(ids) {
+    const idsStr = ids.join(",");
+    const [detailRes, urlRes] = await Promise.all([
+        fetch(withCookie(`/song/detail?ids=${idsStr}`)),
+        fetch(withCookie(`/song/url?id=${idsStr}`))
+    ]);
+    const detailData = await detailRes.json();
+    const urlData = await urlRes.json();
+
+    const urlMap = {};
+    if (urlData.code === 200) {
+        urlData.data.forEach(item => { if (item.url) urlMap[item.id] = item.url; });
+    }
+
+    const tracks = [];
+    if (detailData.code === 200 && detailData.songs) {
+        for (const song of detailData.songs) {
+            if (urlMap[song.id]) {
+                tracks.push({
+                    id: song.id, name: song.name,
+                    artist: (song.ar || []).map(a => a.name).join(", "),
+                    album: (song.al || {}).name || "",
+                    duration: song.dt || 0, url: urlMap[song.id]
+                });
+            }
+        }
+    }
+    return tracks;
+}
+
+async function _loadRemaining(allIds) {
+    for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
+        const batch = allIds.slice(i, i + BATCH_SIZE);
+        const tracks = await _loadBatch(batch);
+        playlist.tracks.push(...tracks);
+        renderPlaylist(playlist.tracks);
+        console.log(`📥 后台: +${tracks.length} (累计 ${playlist.tracks.length})`);
+    }
+    // 后台加载完成后更新缓存
+    _setCache(PLAYLIST_ID, playlist.name, playlist.tracks);
+    console.log(`✅ 全部就绪: ${playlist.tracks.length} 首`);
+}
+
+// 缓存命中时的后台加载：仅获取 URL，不重复获取详情
+async function _loadRemainingFromCache(allIds) {
+    for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
+        const batch = allIds.slice(i, i + BATCH_SIZE);
+        const urlMap = await _fetchUrlMap(batch);
+        for (const t of playlist.tracks) {
+            if (!t.url && urlMap[t.id]) t.url = urlMap[t.id];
+        }
+        renderPlaylist(playlist.tracks);
+        const withUrl = playlist.tracks.filter(t => t.url).length;
+        console.log(`📥 后台URL: +${Object.keys(urlMap).length} (累计可播 ${withUrl})`);
+    }
+    console.log(`✅ 全部就绪: ${playlist.tracks.filter(t => t.url).length} 首可播`);
+}
+
 // ============================================================
-// 队列操作
+// 队列操作（情绪驱动选歌 + 顺序回退）
 // ============================================================
+let trackHistory = []; // 播放历史栈，用于 prevTrack
+
 function getCurrentTrack() {
     return playlist.tracks[currentTrackIndex] || null;
 }
 
 function nextTrack() {
-    currentTrackIndex = (currentTrackIndex + 1) % playlist.tracks.length;
+    const mood = getCurrentMood();
+    // 情绪选歌，如果歌单太小则顺序播放
+    if (playlist.tracks.length > 10) {
+        pickTrackForMood(mood);
+    } else {
+        currentTrackIndex = (currentTrackIndex + 1) % playlist.tracks.length;
+    }
+    trackHistory.push(currentTrackIndex);
+    if (trackHistory.length > 100) trackHistory.shift();
+    return getCurrentTrack();
+}
+
+function prevTrack() {
+    // 从历史栈回溯
+    if (trackHistory.length > 1) {
+        trackHistory.pop(); // 移除当前
+        currentTrackIndex = trackHistory[trackHistory.length - 1];
+    } else {
+        currentTrackIndex = (currentTrackIndex - 1 + playlist.tracks.length) % playlist.tracks.length;
+    }
     return getCurrentTrack();
 }
 
@@ -116,4 +222,22 @@ function getPlaylistName() {
 
 function getTrackCount() {
     return playlist.tracks.length;
+}
+
+// ============================================================
+// 歌词获取
+// ============================================================
+async function fetchLyric(trackId) {
+    try {
+        const res = await fetch(withCookie(`/lyric?id=${trackId}`));
+        const data = await res.json();
+        if (data.code === 200) {
+            const lrc = (data.lrc && data.lrc.lyric) || "";
+            const tlrc = (data.tlyric && data.tlyric.lyric) || "";
+            return { lyric: lrc, translated: tlrc };
+        }
+    } catch (err) {
+        console.warn("歌词获取失败:", err);
+    }
+    return null;
 }

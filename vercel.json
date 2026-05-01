@@ -1,5 +1,4 @@
 {
-  "runtime": "nodejs18.x",
   "functions": {
     "api/tts.js": {
       "memory": 512,

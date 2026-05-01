@@ -29,22 +29,27 @@ module.exports = async (req, res) => {
         return res.end(JSON.stringify({ error: "Method not allowed" }));
     }
 
-    const { text, voice_id } = req.body;
+    const { text, voice_id, model, prompt, temperature, top_p } = req.body;
     if (!text) {
         res.status(400);
         return res.end(JSON.stringify({ error: "Missing text" }));
     }
 
-    // MessagePack 编码
+    // MessagePack 编码 — Fish Speech S2 完整参数
     let payload;
     try {
-        payload = encode({
+        const body = {
             text: text,
             reference_id: voice_id,
             format: "mp3",
             normalize: true,
             latency: "normal"
-        });
+        };
+        if (model) body.model = model;
+        if (prompt) body.prompt = prompt;
+        if (temperature != null) body.temperature = temperature;
+        if (top_p != null) body.top_p = top_p;
+        payload = encode(body);
     } catch (err) {
         res.status(500);
         return res.end(JSON.stringify({ error: "msgpack encode failed", detail: err.message }));
