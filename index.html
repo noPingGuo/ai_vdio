@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Claudio — AI Radio</title>
+
+<style>
+body {
+    margin: 0;
+    height: 100vh;
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+}
+
+/* 卡片 */
+.card {
+    width: 360px;
+    max-height: 90vh;
+    border-radius: 20px;
+    overflow: hidden;
+    background: #111;
+    color: white;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+}
+
+/* 顶部 */
+.header {
+    padding: 15px 20px;
+    font-size: 18px;
+    opacity: 0.9;
+}
+
+.speaking {
+    color: #00ff99;
+    font-size: 12px;
+}
+
+/* 波形 */
+.wave {
+    height: 80px;
+    min-height: 80px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
+    padding: 10px;
+}
+
+.bar {
+    width: 3px;
+    background: white;
+    border-radius: 2px;
+    animation: bounce 1s infinite ease-in-out;
+    animation-play-state: paused;
+}
+
+@keyframes bounce {
+    0%, 100% { height: 10px; }
+    50% { height: 60px; }
+}
+
+/* 歌曲信息区 */
+.now-playing {
+    padding: 8px 20px 4px;
+    font-size: 13px;
+    color: #00ff99;
+    opacity: 0.85;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 下半部分 */
+.content {
+    background: #eee;
+    color: black;
+    padding: 15px 20px;
+    border-radius: 20px 20px 0 0;
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.title {
+    font-size: 20px;
+    font-weight: bold;
+    margin-bottom: 2px;
+}
+
+.subtitle {
+    font-size: 13px;
+    color: gray;
+    margin-bottom: 10px;
+}
+
+/* 字幕区 */
+.text-box {
+    background: #ddd;
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 40px;
+}
+
+/* 控制条 */
+.controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    margin-bottom: 8px;
+}
+
+button {
+    border: none;
+    border-radius: 50%;
+    width: 42px;
+    height: 42px;
+    background: black;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+    transition: transform 0.15s;
+}
+
+button:active {
+    transform: scale(0.9);
+}
+
+/* 歌单列表 */
+.playlist-header {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.playlist-scroll {
+    max-height: 180px;
+    overflow-y: auto;
+    border-radius: 8px;
+    background: #ddd;
+    padding: 4px 0;
+}
+
+#playlist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 13px;
+}
+
+#playlist li {
+    padding: 6px 12px;
+    cursor: default;
+    color: #333;
+    border-left: 3px solid transparent;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+#playlist li.active {
+    background: #fff;
+    border-left-color: #00cc66;
+    color: #111;
+    font-weight: bold;
+}
+
+#playlist li .pl-artist {
+    color: #999;
+    font-weight: normal;
+}
+
+/* 滚动条 */
+.playlist-scroll::-webkit-scrollbar {
+    width: 4px;
+}
+.playlist-scroll::-webkit-scrollbar-thumb {
+    background: #bbb;
+    border-radius: 2px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+
+    <div class="header">
+        Claudio
+        <span class="speaking" id="status">● Ready</span>
+        <span class="speaking" id="voiceName" style="display:block;font-size:10px;opacity:0.6;margin-top:2px;"></span>
+    </div>
+
+    <div class="now-playing">
+        🎵 <span id="songTitle">—</span>
+        <span style="color:#aaa;" id="songArtist"></span>
+    </div>
+
+    <div class="wave" id="wave"></div>
+
+    <div class="content">
+        <div class="title">周一深夜·呼吸</div>
+        <div class="subtitle">Claudio 为你守候</div>
+
+        <div class="text-box">点击播放，Claudio 将为你带来一段深夜陪伴。</div>
+
+        <div class="controls">
+            <button id="playBtn" onclick="toggleAudio()">▶</button>
+            <span id="time">0:00</span>
+        </div>
+
+        <div class="playlist-header">歌单</div>
+        <div class="playlist-scroll">
+            <ul id="playlist"><li>加载中...</li></ul>
+        </div>
+    </div>
+
+</div>
+
+<script src="data.js"></script>
+<script src="ui.js"></script>
+<script src="tts.js"></script>
+<script src="playlist.js"></script>
+<script src="player.js"></script>
+<script src="radio.js"></script>
+<script src="main.js"></script>
+
+</body>
+</html>

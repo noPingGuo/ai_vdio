@@ -1,0 +1,8 @@
+{
+  "name": "ai-radio-claudio",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@msgpack/msgpack": "^3.0.0"
+  }
+}
